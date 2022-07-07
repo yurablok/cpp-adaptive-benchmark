@@ -213,11 +213,11 @@ public:
         // __h __m
         else if (duration < std::chrono::hours(23)) {
             const auto div = std::div(
-                std::chrono::duration_cast<std::chrono::minutes>(duration).count(),
-                static_cast<int64_t>(60)
+                static_cast<int32_t>(std::chrono::duration_cast<std::chrono::minutes>(duration).count()),
+                static_cast<int32_t>(60)
             );
-            const int64_t h = div.quot;
-            const int64_t m = div.rem;
+            const int32_t h = div.quot;
+            const int32_t m = div.rem;
             result += std::to_string(h);
             result += "h ";
             result += toString(m, 2);
@@ -226,11 +226,11 @@ public:
         // ____d __h
         else {
             const auto div = std::div(
-                std::chrono::duration_cast<std::chrono::hours>(duration).count(),
-                static_cast<int64_t>(24)
+                static_cast<int32_t>(std::chrono::duration_cast<std::chrono::hours>(duration).count()),
+                static_cast<int32_t>(24)
             );
-            const int64_t d = div.quot;
-            const int64_t h = div.rem;
+            const int32_t d = div.quot;
+            const int32_t h = div.rem;
             result += std::to_string(d);
             result += "d ";
             result += toString(h, 2);

@@ -7,6 +7,7 @@
 // License: BSL-1.0
 // https://github.com/yurablok/cpp-adaptive-benchmark
 // History:
+// v0.2 2023-Jan-19     Added nanosecond accuracy on Windows.
 // v0.1 2022-Apr-21     First release.
 
 #pragma once
@@ -18,6 +19,16 @@
 #include <functional>
 #include <iomanip>
 #include <iostream>
+
+#ifdef _WIN32
+extern "C" {
+# ifdef _M_ARM64
+    extern int64_t _ReadStatusReg(int32_t);
+# else
+    extern uint64_t __rdtsc();
+# endif // _M_ARM64
+}
+#endif // _WIN32
 
 
 class Benchmark {
@@ -51,7 +62,7 @@ public:
         meta.function  = std::move(testee);
     }
     void run(const uint64_t timePerTestee_ms = 5000, const uint64_t minimumRepetitions = 10000) {
-        const int64_t benchmarkBegin_ns = getSteadyTick_ns();
+        const int64_t benchmarkBegin_ns = getSteadyTickStd_ns();
         std::cout << "Benchmark is running for "
             << m_testees.size() * m_columns.size() << " subjects:\n";
         std::minstd_rand rng(benchmarkBegin_ns);
@@ -83,7 +94,7 @@ public:
                 timeAverage_ns = std::max(timeAverage_ns, static_cast<int64_t>(100));
 
                 const int64_t lastTick_ns = benchmarkBegin_ns + (testeeIdx + 1) * timePerTestee_ns;
-                const int64_t remainingTime_ns = lastTick_ns - getSteadyTick_ns();
+                const int64_t remainingTime_ns = lastTick_ns - getSteadyTickStd_ns();
                 uint64_t exceededNTimes = 0;
                 if (remainingTime_ns < 0) {
                     exceededNTimes = (timePerTestee_ns - remainingTime_ns) / timePerTestee_ns + 1;
@@ -141,14 +152,28 @@ public:
             std::cout << "\n";
         }
         std::cout << "Benchmark finished in " << makeDurationString(
-            getSteadyTick_ns() - benchmarkBegin_ns) << std::endl;
+            getSteadyTickStd_ns() - benchmarkBegin_ns) << std::endl;
     }
 
-    static int64_t getSteadyTick_ns() {
+    static int64_t getSteadyTickStd_ns() {
         return std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch()
         ).count();
     }
+    static int64_t getSteadyTick_ns() {
+#     ifdef _WIN32
+        const uint64_t tsc = readTimeStampCounter();
+        //NOTE: glibc:
+        // This computation should be stable until
+        // we get machines with about 16GHz frequency.
+        const uint64_t s = (tsc / s_Hz) * UINT64_C(1000000000);
+        const uint64_t ns = ((tsc % s_Hz) * UINT64_C(1000000000)) / s_Hz;
+        return s + ns;
+#     else
+        return getSteadyTickStd_ns();
+#     endif // _WIN32
+    }
+
     // Output: 3..11 symbols
     static std::string makeDurationString(const int64_t duration_ns) {
         std::string result;
@@ -239,6 +264,43 @@ public:
         return result;
     }
 
+    Benchmark() {
+#    ifdef _WIN32
+#     ifdef _M_ARM64
+#      ifndef ARM64_SYSREG
+#       define ARM64_SYSREG(op0, op1, crn, crm, op2) \
+            ( ((op0 & 1) << 14) | \
+              ((op1 & 7) << 11) | \
+              ((crn & 15) << 7) | \
+              ((crm & 15) << 3) | \
+              ((op2 & 7) << 0) )
+#      endif
+#      ifndef ARM64_CNTFRQ_EL0
+        // Counter-timer Frequency register
+        // https://developer.arm.com/documentation/ddi0601/2022-12/AArch64-Registers/CNTFRQ-EL0--Counter-timer-Frequency-register?lang=en
+        constexpr int32_t ARM64_CNTFRQ_EL0 = ARM64_SYSREG(3, 3, 14, 0, 0);
+#      endif
+        s_Hz = static_cast<uint64_t>(_ReadStatusReg(ARM64_CNTFRQ_EL0));
+#     else
+        const int64_t tick1_ns = getSteadyTickStd_ns();
+        const int64_t tsc1 = readTimeStampCounter();
+        const int64_t tick2_ns = getSteadyTickStd_ns();
+        const int64_t tsc2 = readTimeStampCounter();
+        const int64_t delay_ns = tick2_ns - tick1_ns;
+        const int64_t delay = tsc2 - tsc1;
+        const int64_t tick_ns = tick2_ns - delay_ns / 2;
+        const int64_t tsc = tsc1 + delay / 2;
+        // tick_ns / 1000000000 = tick_s
+        //     tsc / x = tick_s
+        // tsc  tick_ns
+        //  x   1000000000
+        const double Hz = (static_cast<double>(tsc) * 1000000000.0)
+            / static_cast<double>(tick_ns);
+        s_Hz = static_cast<int64_t>(Hz);
+#     endif
+#    endif // _WIN32
+    }
+
 private:
     static std::string toString(const uint64_t value, const uint8_t width) {
         int64_t temp = value;
@@ -268,4 +330,30 @@ private:
     };
     std::vector<ColumnMeta> m_columns;
     uint32_t m_maxNameLength = sizeof("Name") - 1;
+
+# ifdef _WIN32
+    static inline uint64_t readTimeStampCounter() {
+#     ifdef _M_ARM64
+#      ifndef ARM64_SYSREG
+#       define ARM64_SYSREG(op0, op1, crn, crm, op2) \
+            ( ((op0 & 1) << 14) | \
+              ((op1 & 7) << 11) | \
+              ((crn & 15) << 7) | \
+              ((crm & 15) << 3) | \
+              ((op2 & 7) << 0) )
+#      endif
+#      ifndef ARM64_CNTVCT_EL0
+        // Counter-timer Virtual Count register
+        // https://developer.arm.com/documentation/ddi0601/2022-12/AArch64-Registers/CNTVCT-EL0--Counter-timer-Virtual-Count-register?lang=en
+        constexpr int32_t ARM64_CNTVCT_EL0 = ARM64_SYSREG(3, 3, 14, 0, 2);
+#      endif
+        return static_cast<uint64_t>(_ReadStatusReg(ARM64_CNTVCT_EL0));
+#     else
+        return __rdtsc();
+#     endif // _M_ARM64
+    }
+# endif // _WIN32
+    static uint64_t s_Hz;
 };
+
+uint64_t Benchmark::s_Hz = 0;

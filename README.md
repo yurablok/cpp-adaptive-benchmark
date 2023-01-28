@@ -6,43 +6,55 @@ perform for the desired time.
 ### Basic example:
 
 ```cpp
-volatile int64_t ci;
-volatile double cf;
-
-Benchmark bench;
-bench.setColumnsNumber(2);
-bench.add("int64_t", 0, [&](uint32_t random) {
+Benchmark benchmark;
+benchmark.setColumnsNumber(2);
+benchmark.add("int64_t", 0, [&](uint32_t random) -> uint32_t {
     int64_t a = random;
-    int64_t b = random << 1;
-    ci = a * b;
+    int64_t b = random;
+    return a * b;
 });
-bench.add("int64_t", 1, [&](uint32_t random) {
+benchmark.add("int64_t", 1, [&](uint32_t random) -> uint32_t {
     int64_t a = random;
-    int64_t b = random << 1;
-    ci = a / b;
+    int64_t b = random;
+    return a / b;
 });
-bench.add("double", 0, [&](uint32_t random) {
+benchmark.add("double", 0, [&](uint32_t random) -> uint32_t {
     double a = random;
-    double b = random << 1;
-    cf = a * b;
+    double b = random;
+    return a * b;
 });
-bench.add("double", 1, [&](uint32_t random) {
+benchmark.add("double", 1, [&](uint32_t random) -> uint32_t {
     double a = random;
-    double b = random << 1;
-    cf = a / b;
+    double b = random;
+    return a / b;
 });
-bench.run(5000); // 5s
+benchmark.run(5); // 5s
 ```
 
 ```cpp
 Benchmark is running for 4 subjects:
- [0] int64_t... Done.
- [1] int64_t... Done.
- [2] double... Done.
- [3] double... Done.
-| Name    | Time |   %   | Time |   %   |
-|:--------|-----:|------:|-----:|------:|
-| int64_t | 22ns |   110 | 31ns | 119.2 |
-| double  | 20ns |   100 | 26ns |   100 |
-Benchmark finished in 20s 304ms
+ [0] int64_t... Done in 5s 066ms
+ [1] int64_t... Done in 5s 065ms
+ [2] double... Done in 5s 047ms
+ [3] double... Done in 5s 039ms
+
+Minimum time:
+| Name    |      Time |   %   |      Time |   %   |
+|:--------|----------:|------:|----------:|------:|
+| int64_t |     835ps |   100 |     835ps |   100 |
+| double  | 1ns 003ps | 120.1 | 1ns 011ps |   121 |
+
+Maximum time:
+| Name    |      Time |   %   |      Time |   %   |
+|:--------|----------:|------:|----------:|------:|
+| int64_t | 1ns 263ps |   100 | 1ns 137ps |   100 |
+| double  | 1ns 287ps | 101.9 | 1ns 624ps | 142.8 |
+
+Average time:
+| Name    |      Time |   %   |      Time |   %   |
+|:--------|----------:|------:|----------:|------:|
+| int64_t |     843ps |   100 |     846ps |   100 |
+| double  | 1ns 017ps | 120.6 | 1ns 031ps | 121.8 |
+
+Benchmark finished in 20s 047ms
 ```

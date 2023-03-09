@@ -628,18 +628,9 @@ Benchmark::Benchmark() {
 }
 
 std::string Benchmark::toString(const uint64_t value, const uint8_t width) {
-    int64_t temp = value;
-    size_t count = 0;
-    while (temp != 0) {
-        temp /= 10;
-        ++count;
-    }
-    std::string result;
-    if (count < width) {
-        result.resize(width - count, '0');
-    }
-    if (value != 0) {
-        result += std::to_string(value);
+    std::string result = std::to_string(value);
+    if (result.size() < width) {
+        result = std::string(width - result.size(), '0') + result;
     }
     return result;
 }

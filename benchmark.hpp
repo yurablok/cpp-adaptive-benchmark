@@ -7,9 +7,10 @@
 // License: BSL-1.0
 // https://github.com/yurablok/cpp-adaptive-benchmark
 // History:
-// v0.3 2023-Feb-04     Added picosecond accuracy and min, max, avg statistics.
-// v0.2 2023-Jan-19     Added nanosecond accuracy on Windows.
-// v0.1 2022-Apr-21     First release.
+// v0.4   2025-12-18    Added previous value into callbacks to simplify some test cases.
+// v0.3   2023-02-04    Added picosecond accuracy and min, max, avg statistics.
+// v0.2   2023-01-19    Added nanosecond accuracy on Windows.
+// v0.1   2022-04-21    First release.
 
 #pragma once
 #include <cassert>
@@ -29,7 +30,7 @@ public:
 
     // column: 0..number-1
     void add(std::string name, const uint8_t column,
-        std::function<uint32_t(uint32_t random)> testee);
+        std::function<uint32_t(uint32_t random, uint32_t previous)> testee);
 
     void run(const uint32_t timePerTestee_s = 5, const uint32_t minimumRepetitions = 500);
 
@@ -66,7 +67,7 @@ private:
     static std::string toString(const uint64_t value, const uint8_t width);
 
     struct TesteeMeta {
-        std::function<uint32_t(uint32_t random)> function;
+        std::function<uint32_t(uint32_t random, uint32_t previous)> function;
         int64_t minimum_ps = 0;
         int64_t average_ps = 0;
         int64_t maximum_ps = 0;
@@ -120,11 +121,11 @@ void Benchmark::setColumnsNumber(const uint8_t number) {
 }
 
 void Benchmark::add(std::string name, const uint8_t column,
-        std::function<uint32_t(uint32_t random)> testee) {
+        std::function<uint32_t(uint32_t random, uint32_t previous)> testee) {
     assert(!name.empty());
     assert(column < m_columns.size());
     assert(testee);
-    m_maxNameLength = std::max(static_cast<uint32_t>(name.size()), m_maxNameLength);
+    m_maxNameLength = std::max(uint32_t(name.size()), m_maxNameLength);
 
     std::vector<TesteeMeta>* vec = nullptr;
     for (auto& it : m_testees) {
@@ -150,8 +151,8 @@ void Benchmark::run(const uint32_t timePerTestee_s, const uint32_t minimumRepeti
     std::cout << "Benchmark is running for "
         << m_testees.size() * m_columns.size() << " subjects:\n";
     lcg32 rng;
-    rng.seed(benchmarkBegin_ns);
-    const int64_t timePerTestee_ns = static_cast<int64_t>(timePerTestee_s) * 1000000000;
+    rng.seed(uint32_t(benchmarkBegin_ns));
+    const int64_t timePerTestee_ns = int64_t(timePerTestee_s) * 1000000000;
     const int64_t totalTime_ns = timePerTestee_ns * m_testees.size();
 
     int64_t testeeIdx = 0;
@@ -176,7 +177,7 @@ void Benchmark::run(const uint32_t timePerTestee_s, const uint32_t minimumRepeti
                 const uint32_t random = rng();
                 const int64_t begin_ns = getSteadyTick_ns();
 
-                doNotOptimize += testee.function(random);
+                doNotOptimize += testee.function(random, doNotOptimize);
 
                 const int64_t end_ns = getSteadyTick_ns();
                 const int64_t diff_ns = end_ns - begin_ns;
@@ -199,7 +200,7 @@ void Benchmark::run(const uint32_t timePerTestee_s, const uint32_t minimumRepeti
             constexpr int64_t minClarifyingTime_ps = INT64_C(500000000000); // 500 ms
             uint32_t n = 0;
             if (testee.average_ps < minDesiredTime_ps) {
-                n = minDesiredTime_ps / testee.average_ps;
+                n = uint32_t(minDesiredTime_ps / testee.average_ps);
                 constexpr uint32_t reps = minClarifyingTime_ps / minDesiredTime_ps;
                 testee.minimum_ps = INT64_MAX;
                 testee.maximum_ps = 0;
@@ -212,7 +213,7 @@ void Benchmark::run(const uint32_t timePerTestee_s, const uint32_t minimumRepeti
                     const int64_t begin_ns = getSteadyTick_ns();
 
                     for (uint32_t j = 0; j < n; ++j) {
-                        doNotOptimize += testee.function(random);
+                        doNotOptimize += testee.function(random, doNotOptimize);
                     }
 
                     const int64_t end_ns = getSteadyTick_ns();
@@ -232,7 +233,7 @@ void Benchmark::run(const uint32_t timePerTestee_s, const uint32_t minimumRepeti
                     << makeDurationString(clarifyingEnd_ps - clarifyingBegin_ps);
 #             endif
 
-                n = minDesiredTime_ps / testee.average_ps;
+                n = uint32_t(minDesiredTime_ps / testee.average_ps);
                 testee.minimum_ps = INT64_MAX;
                 testee.maximum_ps = 0;
                 testee.average_ps = 0;
@@ -244,7 +245,7 @@ void Benchmark::run(const uint32_t timePerTestee_s, const uint32_t minimumRepeti
                     const int64_t begin_ns = getSteadyTick_ns();
 
                     for (uint32_t j = 0; j < n; ++j) {
-                        doNotOptimize += testee.function(random);
+                        doNotOptimize += testee.function(random, doNotOptimize);
                     }
 
                     const int64_t end_ns = getSteadyTick_ns();
@@ -277,7 +278,7 @@ void Benchmark::run(const uint32_t timePerTestee_s, const uint32_t minimumRepeti
             uint64_t repetitions = 0;
             if (remainingTime_ns > 0) {
                 repetitions = (remainingTime_ns * 1000) / testee.average_ps;
-                n = minDesiredTime_ps / testee.average_ps;
+                n = uint32_t(minDesiredTime_ps / testee.average_ps);
                 if (n > 0) {
                     repetitions /= n;
                     if (repetitions > 0) {
@@ -292,7 +293,7 @@ void Benchmark::run(const uint32_t timePerTestee_s, const uint32_t minimumRepeti
                     const uint32_t random = rng();
                     const int64_t begin_ns = getSteadyTick_ns();
 
-                    doNotOptimize += testee.function(random);
+                    doNotOptimize += testee.function(random, doNotOptimize);
 
                     const int64_t end_ns = getSteadyTick_ns();
                     const int64_t diff_ns = end_ns - begin_ns;
@@ -311,7 +312,7 @@ void Benchmark::run(const uint32_t timePerTestee_s, const uint32_t minimumRepeti
                     const int64_t begin_ns = getSteadyTick_ns();
 
                     for (uint32_t j = 0; j < n; ++j) {
-                        doNotOptimize += testee.function(random);
+                        doNotOptimize += testee.function(random, doNotOptimize);
                     }
 
                     const int64_t end_ns = getSteadyTick_ns();
@@ -341,13 +342,13 @@ void Benchmark::run(const uint32_t timePerTestee_s, const uint32_t minimumRepeti
             auto& column = m_columns[columnIdx++];
             column.minTime_ps = std::min(testee.minimum_ps, column.minTime_ps);
             column.minTimeStrLength = std::max(column.minTimeStrLength,
-                static_cast<uint32_t>(makeDurationString(testee.minimum_ps).size()));
+                uint32_t(makeDurationString(testee.minimum_ps).size()));
             column.maxTime_ps = std::min(testee.maximum_ps, column.maxTime_ps);
             column.maxTimeStrLength = std::max(column.maxTimeStrLength,
-                static_cast<uint32_t>(makeDurationString(testee.maximum_ps).size()));
+                uint32_t(makeDurationString(testee.maximum_ps).size()));
             column.avgTime_ps = std::min(testee.average_ps, column.avgTime_ps);
             column.avgTimeStrLength = std::max(column.avgTimeStrLength,
-                static_cast<uint32_t>(makeDurationString(testee.average_ps).size()));
+                uint32_t(makeDurationString(testee.average_ps).size()));
         }
     }
     
@@ -406,9 +407,10 @@ void Benchmark::run(const uint32_t timePerTestee_s, const uint32_t minimumRepeti
                     timeStrLength = column.avgTimeStrLength;
                     break;
                 }
-                const float perc = 0.1f * static_cast<float>(
-                    (testeeTime_ps * 1000) / std::max(time_ps, INT64_C(1))
-                );
+                float perc = 0.1f * float((testeeTime_ps * 1000) / std::max(time_ps, INT64_C(1)));
+                if (perc >= 1000.0f) {
+                    perc = float(uint32_t(perc));
+                }
                 std::cout << std::setw(timeStrLength + 1) << std::right
                     << makeDurationString(testeeTime_ps)
                     << " | " << std::setw(5) << perc << " |";
@@ -478,10 +480,7 @@ std::string Benchmark::makeDurationString(const int64_t duration_ps) {
     }
     // ___ns
     else if (duration <= std::chrono::nanoseconds(999)) {
-        const auto div = std::div(
-            duration_ps,
-            static_cast<int64_t>(1000)
-        );
+        const auto div = std::div(duration_ps, int64_t(1000));
         const int64_t ns = div.quot;
         const int64_t ps = div.rem;
         result += std::to_string(ns);
@@ -491,10 +490,7 @@ std::string Benchmark::makeDurationString(const int64_t duration_ps) {
     }
     // ___us ___ns
     else if (duration <= std::chrono::microseconds(999)) {
-        const auto div = std::div(
-            duration.count(),
-            static_cast<int64_t>(1000)
-        );
+        const auto div = std::div(duration.count(), int64_t(1000));
         const int64_t us = div.quot;
         const int64_t ns = div.rem;
         result += std::to_string(us);
@@ -506,7 +502,7 @@ std::string Benchmark::makeDurationString(const int64_t duration_ps) {
     else if (duration <= std::chrono::milliseconds(999)) {
         const auto div = std::div(
             std::chrono::duration_cast<std::chrono::microseconds>(duration).count(),
-            static_cast<int64_t>(1000)
+            int64_t(1000)
         );
         const int64_t ms = div.quot;
         const int64_t us = div.rem;
@@ -519,7 +515,7 @@ std::string Benchmark::makeDurationString(const int64_t duration_ps) {
     else if (duration <= std::chrono::seconds(59)) {
         const auto div = std::div(
             std::chrono::duration_cast<std::chrono::milliseconds>(duration).count(),
-            static_cast<int64_t>(1000)
+            int64_t(1000)
         );
         const int64_t s = div.quot;
         const int64_t ms = div.rem;
@@ -532,7 +528,7 @@ std::string Benchmark::makeDurationString(const int64_t duration_ps) {
     else if (duration <= std::chrono::minutes(59)) {
         const auto div = std::div(
             std::chrono::duration_cast<std::chrono::seconds>(duration).count(),
-            static_cast<int64_t>(60)
+            int64_t(60)
         );
         const int64_t m = div.quot;
         const int64_t s = div.rem;
@@ -544,8 +540,8 @@ std::string Benchmark::makeDurationString(const int64_t duration_ps) {
     // __h __m
     else if (duration <= std::chrono::hours(23)) {
         const auto div = std::div(
-            static_cast<int32_t>(std::chrono::duration_cast<std::chrono::minutes>(duration).count()),
-            static_cast<int32_t>(60)
+            int32_t(std::chrono::duration_cast<std::chrono::minutes>(duration).count()),
+            int32_t(60)
         );
         const int32_t h = div.quot;
         const int32_t m = div.rem;
@@ -557,8 +553,8 @@ std::string Benchmark::makeDurationString(const int64_t duration_ps) {
     // ____d __h
     else {
         const auto div = std::div(
-            static_cast<int32_t>(std::chrono::duration_cast<std::chrono::hours>(duration).count()),
-            static_cast<int32_t>(24)
+            int32_t(std::chrono::duration_cast<std::chrono::hours>(duration).count()),
+            int32_t(24)
         );
         const int32_t d = div.quot;
         const int32_t h = div.rem;
@@ -604,7 +600,7 @@ Benchmark::Benchmark() {
             winapi::RegCloseKey(key);
             break;
         }
-        s_Hz[idx] = static_cast<uint64_t>(MHz) * 1000000;
+        s_Hz[idx] = uint64_t(MHz) * 1000000;
         winapi::RegCloseKey(key);
 #     else
         HKEY key = nullptr;
@@ -619,7 +615,7 @@ Benchmark::Benchmark() {
             RegCloseKey(key);
             break;
         }
-        s_Hz[idx] = static_cast<uint64_t>(MHz) * 1000000;
+        s_Hz[idx] = uint64_t(MHz) * 1000000;
         RegCloseKey(key);
 #     endif // WINADVAPI
     }

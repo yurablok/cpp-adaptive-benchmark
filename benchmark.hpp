@@ -7,6 +7,7 @@
 // License: BSL-1.0
 // https://github.com/yurablok/cpp-adaptive-benchmark
 // History:
+// v0.5   2026-06-04    Fixed building with ClangCL.
 // v0.4   2025-12-18    Added previous value into callbacks to simplify some test cases.
 // v0.3   2023-02-04    Added picosecond accuracy and min, max, avg statistics.
 // v0.2   2023-01-19    Added nanosecond accuracy on Windows.
@@ -101,7 +102,12 @@ extern "C" {
 # ifdef _M_ARM64
     extern int64_t _ReadStatusReg(int32_t code);
 # else
+#  ifdef __clang__
+    extern uint64_t __stdcall __builtin_ia32_rdtscp(uint32_t* processorIdx);
+    inline uint64_t __rdtscp(uint32_t* processorIdx) { return __builtin_ia32_rdtscp(processorIdx); }
+#  else
     extern uint64_t __stdcall __rdtscp(uint32_t* processorIdx);
+#  endif
 #  ifndef WINADVAPI
     extern int32_t __stdcall RegOpenKeyExA(uint32_t* key, const char* subkey,
         uint32_t options, uint32_t rights, uint32_t** result);
@@ -153,7 +159,6 @@ void Benchmark::run(const uint32_t timePerTestee_s, const uint32_t minimumRepeti
     lcg32 rng;
     rng.seed(uint32_t(benchmarkBegin_ns));
     const int64_t timePerTestee_ns = int64_t(timePerTestee_s) * 1000000000;
-    const int64_t totalTime_ns = timePerTestee_ns * m_testees.size();
 
     int64_t testeeIdx = 0;
     uint32_t doNotOptimize = 0;
@@ -206,7 +211,6 @@ void Benchmark::run(const uint32_t timePerTestee_s, const uint32_t minimumRepeti
                 testee.maximum_ps = 0;
                 testee.average_ps = 0;
                 sum_ns = 0;
-                const int64_t clarifyingBegin_ps = getSteadyTick_ns() * 1000;
                 // Clarifying measurement
                 for (uint32_t i = 0; i < reps; ++i) {
                     const uint32_t random = rng();
@@ -225,7 +229,6 @@ void Benchmark::run(const uint32_t timePerTestee_s, const uint32_t minimumRepeti
                     testee.minimum_ps = std::min(testee.minimum_ps, (diff_ns * 1000) / n);
                     testee.maximum_ps = std::max(testee.maximum_ps, (diff_ns * 1000) / n);
                 }
-                const int64_t clarifyingEnd_ps = getSteadyTick_ns() * 1000;
                 testee.average_ps = (sum_ns * 1000) / reps;
                 testee.average_ps /= n;
 #             ifdef DEBUG_ADAPTIVE_BENCHMARK
@@ -238,7 +241,6 @@ void Benchmark::run(const uint32_t timePerTestee_s, const uint32_t minimumRepeti
                 testee.maximum_ps = 0;
                 testee.average_ps = 0;
                 sum_ns = 0;
-                const int64_t clarifying2Begin_ps = getSteadyTick_ns() * 1000;
                 // Clarifying measurement
                 for (uint32_t i = 0; i < reps; ++i) {
                     const uint32_t random = rng();
@@ -257,7 +259,6 @@ void Benchmark::run(const uint32_t timePerTestee_s, const uint32_t minimumRepeti
                     testee.minimum_ps = std::min(testee.minimum_ps, (diff_ns * 1000) / n);
                     testee.maximum_ps = std::max(testee.maximum_ps, (diff_ns * 1000) / n);
                 }
-                const int64_t clarifying2End_ps = getSteadyTick_ns() * 1000;
                 testee.average_ps = (sum_ns * 1000) / reps;
                 testee.average_ps /= n;
 #             ifdef DEBUG_ADAPTIVE_BENCHMARK

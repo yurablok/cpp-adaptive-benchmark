@@ -7,6 +7,7 @@
 // License: BSL-1.0
 // https://github.com/yurablok/cpp-adaptive-benchmark
 // History:
+// v0.6   2026-06-05    Improved adaptive algorithm (dynamic scaling instead of clarifying).
 // v0.5   2026-06-04    Fixed building with ClangCL.
 // v0.4   2025-12-18    Added previous value into callbacks to simplify some test cases.
 // v0.3   2023-02-04    Added picosecond accuracy and min, max, avg statistics.
@@ -158,14 +159,18 @@ void Benchmark::run(const uint32_t timePerTestee_s, const uint32_t minimumRepeti
         << m_testees.size() * m_columns.size() << " subjects:\n";
     lcg32 rng;
     rng.seed(uint32_t(benchmarkBegin_ns));
-    const int64_t timePerTestee_ns = int64_t(timePerTestee_s) * 1000000000;
+    const int64_t timePerTestee_ns = int64_t(timePerTestee_s) * 1000 * 1000 * 1000;
+    constexpr int64_t targetTimeForReps_us = 200;
+    constexpr int64_t targetTimeForReps_ps = targetTimeForReps_us * 1000 * 1000;
 
-    int64_t testeeIdx = 0;
+    int32_t testeeIdx = 0;
     uint32_t doNotOptimize = 0;
     for (auto& itVec : m_testees) {
         uint8_t columnIdx = 0;
         for (auto& testee : itVec.second) {
             const int64_t benchmarkTesteeBegin_ns = getSteadyTickStd_ns();
+            const int64_t benchmarkTesteeExpectedEnd_ns
+                = benchmarkTesteeBegin_ns + timePerTestee_ns;
             std::cout << " [" << testeeIdx++ << "] " << itVec.first << "... ";
             if (!testee.function) {
                 std::cout << "Noop." << std::endl;
@@ -175,170 +180,50 @@ void Benchmark::run(const uint32_t timePerTestee_s, const uint32_t minimumRepeti
 
             testee.minimum_ps = INT64_MAX;
             testee.maximum_ps = 0;
-            testee.average_ps = 0;
-            int64_t sum_ns = 0;
-            // Rough measurement
-            for (uint32_t i = 0; i < minimumRepetitions; ++i) {
+            uint64_t sum_ps = 0;
+            uint64_t count = 0;
+            uint32_t reps = 1;
+            uint8_t stabilized = 0;
+            while (true) {
                 const uint32_t random = rng();
+                const int64_t now_ns = getSteadyTickStd_ns();
+                if (benchmarkTesteeExpectedEnd_ns <= now_ns) {
+                    break;
+                }
                 const int64_t begin_ns = getSteadyTick_ns();
-
-                doNotOptimize += testee.function(random, doNotOptimize);
-
-                const int64_t end_ns = getSteadyTick_ns();
-                const int64_t diff_ns = end_ns - begin_ns;
-                if (diff_ns <= 1) {
-                    continue;
-                }
-                sum_ns += diff_ns;
-                testee.minimum_ps = std::min(testee.minimum_ps, diff_ns * 1000);
-                testee.maximum_ps = std::max(testee.maximum_ps, diff_ns * 1000);
-            }
-            testee.average_ps = (sum_ns / minimumRepetitions) * 1000;
-#         ifdef DEBUG_ADAPTIVE_BENCHMARK
-            std::cout
-                << "\n min=" << makeDurationString(testee.minimum_ps)
-                << " max=" << makeDurationString(testee.maximum_ps)
-                << " avg=" << makeDurationString(testee.average_ps);
-#         endif
-
-            constexpr int64_t minDesiredTime_ps = INT64_C(5000000000); // 5 ms
-            constexpr int64_t minClarifyingTime_ps = INT64_C(500000000000); // 500 ms
-            uint32_t n = 0;
-            if (testee.average_ps < minDesiredTime_ps) {
-                n = uint32_t(minDesiredTime_ps / testee.average_ps);
-                constexpr uint32_t reps = minClarifyingTime_ps / minDesiredTime_ps;
-                testee.minimum_ps = INT64_MAX;
-                testee.maximum_ps = 0;
-                testee.average_ps = 0;
-                sum_ns = 0;
-                // Clarifying measurement
                 for (uint32_t i = 0; i < reps; ++i) {
-                    const uint32_t random = rng();
-                    const int64_t begin_ns = getSteadyTick_ns();
-
-                    for (uint32_t j = 0; j < n; ++j) {
-                        doNotOptimize += testee.function(random, doNotOptimize);
-                    }
-
-                    const int64_t end_ns = getSteadyTick_ns();
-                    const int64_t diff_ns = end_ns - begin_ns;
-                    if (diff_ns <= 1) {
-                        continue;
-                    }
-                    sum_ns += diff_ns;
-                    testee.minimum_ps = std::min(testee.minimum_ps, (diff_ns * 1000) / n);
-                    testee.maximum_ps = std::max(testee.maximum_ps, (diff_ns * 1000) / n);
-                }
-                testee.average_ps = (sum_ns * 1000) / reps;
-                testee.average_ps /= n;
-#             ifdef DEBUG_ADAPTIVE_BENCHMARK
-                std::cout << "\n clarifying="
-                    << makeDurationString(clarifyingEnd_ps - clarifyingBegin_ps);
-#             endif
-
-                n = uint32_t(minDesiredTime_ps / testee.average_ps);
-                testee.minimum_ps = INT64_MAX;
-                testee.maximum_ps = 0;
-                testee.average_ps = 0;
-                sum_ns = 0;
-                // Clarifying measurement
-                for (uint32_t i = 0; i < reps; ++i) {
-                    const uint32_t random = rng();
-                    const int64_t begin_ns = getSteadyTick_ns();
-
-                    for (uint32_t j = 0; j < n; ++j) {
-                        doNotOptimize += testee.function(random, doNotOptimize);
-                    }
-
-                    const int64_t end_ns = getSteadyTick_ns();
-                    const int64_t diff_ns = end_ns - begin_ns;
-                    if (diff_ns <= 1) {
-                        continue;
-                    }
-                    sum_ns += diff_ns;
-                    testee.minimum_ps = std::min(testee.minimum_ps, (diff_ns * 1000) / n);
-                    testee.maximum_ps = std::max(testee.maximum_ps, (diff_ns * 1000) / n);
-                }
-                testee.average_ps = (sum_ns * 1000) / reps;
-                testee.average_ps /= n;
-#             ifdef DEBUG_ADAPTIVE_BENCHMARK
-                std::cout << "\n clarifying="
-                    << makeDurationString(clarifying2End_ps - clarifying2Begin_ps);
-#             endif
-            }
-#         ifdef DEBUG_ADAPTIVE_BENCHMARK
-            std::cout
-                << "\n n=" << n
-                << " min=" << makeDurationString(testee.minimum_ps)
-                << " max=" << makeDurationString(testee.maximum_ps)
-                << " avg=" << makeDurationString(testee.average_ps);
-#         endif
-
-            const int64_t lastTick_ns = benchmarkTesteeBegin_ns + timePerTestee_ns;
-            const int64_t remainingTime_ns = lastTick_ns - getSteadyTickStd_ns();
-            uint64_t repetitions = 0;
-            if (remainingTime_ns > 0) {
-                repetitions = (remainingTime_ns * 1000) / testee.average_ps;
-                n = uint32_t(minDesiredTime_ps / testee.average_ps);
-                if (n > 0) {
-                    repetitions /= n;
-                    if (repetitions > 0) {
-                        sum_ns = 0;
-                    }
-                }
-            }
-
-            // Main measurement
-            if (n == 0) {
-                for (uint64_t i = 0; i < repetitions; ++i) {
-                    const uint32_t random = rng();
-                    const int64_t begin_ns = getSteadyTick_ns();
-
                     doNotOptimize += testee.function(random, doNotOptimize);
-
-                    const int64_t end_ns = getSteadyTick_ns();
-                    const int64_t diff_ns = end_ns - begin_ns;
-                    if (diff_ns <= 1) {
-                        continue;
-                    }
-                    sum_ns += diff_ns;
-                    testee.minimum_ps = std::min(testee.minimum_ps, diff_ns * 1000);
-                    testee.maximum_ps = std::max(testee.maximum_ps, diff_ns * 1000);
                 }
-                testee.average_ps = sum_ns / (minimumRepetitions + repetitions) * 1000;
-            }
-            else if (repetitions > 0) {
-                for (uint64_t i = 0; i < repetitions; ++i) {
-                    const uint32_t random = rng();
-                    const int64_t begin_ns = getSteadyTick_ns();
+                const int64_t end_ns = getSteadyTick_ns();
+                const int64_t diff_ps = (end_ns - begin_ns) * 1000;
+                sum_ps += diff_ps;
+                count += reps;
 
-                    for (uint32_t j = 0; j < n; ++j) {
-                        doNotOptimize += testee.function(random, doNotOptimize);
-                    }
+                const int64_t average_ps = diff_ps / reps;
+                testee.minimum_ps = std::min(testee.minimum_ps, average_ps);
+                testee.maximum_ps = std::max(testee.maximum_ps, average_ps);
 
-                    const int64_t end_ns = getSteadyTick_ns();
-                    const int64_t diff_ns = end_ns - begin_ns;
-                    if (diff_ns <= 1) {
-                        continue;
-                    }
-                    sum_ns += diff_ns;
-                    testee.minimum_ps = std::min(testee.minimum_ps, (diff_ns * 1000) / n);
-                    testee.maximum_ps = std::max(testee.maximum_ps, (diff_ns * 1000) / n);
+                if (diff_ps < targetTimeForReps_ps) {
+                    reps *= 2;
                 }
-                testee.average_ps = (sum_ns * 1000) / repetitions;
-                testee.average_ps /= n;
+                else if (diff_ps > targetTimeForReps_ps and reps > 1) {
+                    reps /= 2;
+                    if (stabilized < 8) {
+                        ++stabilized;
+                        if (stabilized == 8) {
+                            stabilized = UINT8_MAX;
+                            testee.minimum_ps = INT64_MAX;
+                            testee.maximum_ps = 0;
+                            sum_ps = 0;
+                            count = 0;
+                        }
+                    }
+                }
             }
-#         ifdef DEBUG_ADAPTIVE_BENCHMARK
-            std::cout
-                << "\n n=" << n << " r=" << repetitions
-                << " min=" << makeDurationString(testee.minimum_ps)
-                << " max=" << makeDurationString(testee.maximum_ps)
-                << " avg=" << makeDurationString(testee.average_ps) << "\n";
-#         endif
+            testee.average_ps = sum_ps / (count | 1);
 
             std::cout << "Done in " << makeDurationString(
-                    (getSteadyTickStd_ns() - benchmarkTesteeBegin_ns) * 1009)
-                << (doNotOptimize ? " " : "  ") << std::endl;
+                (getSteadyTickStd_ns() - benchmarkTesteeBegin_ns) * 1000) << std::endl;
 
             auto& column = m_columns[columnIdx++];
             column.minTime_ps = std::min(testee.minimum_ps, column.minTime_ps);
@@ -421,12 +306,13 @@ void Benchmark::run(const uint32_t timePerTestee_s, const uint32_t minimumRepeti
     };
     std::cout << "\nMinimum time:\n";
     print(0);
-    std::cout << "\nMaximum time:\n";
-    print(1);
     std::cout << "\nAverage time:\n";
     print(2);
+    std::cout << "\nMaximum time:\n";
+    print(1);
     std::cout << "\nBenchmark finished in " << makeDurationString(
-        (getSteadyTickStd_ns() - benchmarkBegin_ns) * 1000) << std::endl;
+        (getSteadyTickStd_ns() - benchmarkBegin_ns) * 1000)
+        << (doNotOptimize ? " " : "  ") << std::endl;
 }
 
 int64_t Benchmark::getSteadyTickStd_ns() noexcept {
